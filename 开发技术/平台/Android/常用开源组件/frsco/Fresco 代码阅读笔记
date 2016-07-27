@@ -1,0 +1,95 @@
+
+# 编译问题
+编译这个项目还是比较费时的, 需要下载很多依赖包
+本来想使用 GAE 的代理, 但是发现证书不被信任导致下载失败.
+
+还有遇到一个编译错误的问题:
+>Error:Execution failed for task ':static-webp:downloadLibwebp'.
+> javax.net.ssl.SSLHandshakeException: sun.security.validator.ValidatorException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target
+
+初步来看是在执行 :static-webp:downloadLibwebp 出了问题:
+```
+task downloadLibwebp(dependsOn: createNativeDepsDirectories, type: Download) {
+    src 'https://github.com/webmproject/libwebp/archive/v0.4.3.tar.gz'
+    onlyIfNewer true
+    overwrite false
+    dest downloadsDir
+}
+```
+然后发现那是一个下载任务, 怀疑是因为之前用的是 GAE 代理,导致下载的文件不被信任?
+之后把 onlyIfNewer 改为 false, 和 overwrite 改为 true 之后 重新编译之后通过了
+
+还遇到一个问题就是 NDK 路径没有设置,  设置好 NDK 的路径就好了
+
+
+
+# 第一个项目 demo
+第一个项目只有一个 MainActivty, 里面就是一些 SimpleDraweeView 的一些常规用法
+到时依赖不少东西,
+
+还看到 使用 internalCompile mavenBasicCompile  这样子的依赖东西如下:
+```
+dependencies {
+    provided "com.android.support:support-annotations:${SUPPORT_LIB_VERSION}"
+
+    internalCompile project(':drawee-backends:drawee-pipeline')
+    internalCompile project(':static-webp')
+    internalCompile project(':animated-gif')
+    internalCompile project(':animated-webp')
+
+    // To get the core Fresco library only without animations or webp support
+    mavenBasicCompile 'com.facebook.fresco:fresco:0.11.0'
+
+    // To get the core Fresco library with webp support
+    mavenWithWebpCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithWebpCompile 'com.facebook.fresco:webpsupport:0.11.0'
+
+    // To get the core Fresco library with webp support, including animated webp
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:animated-webp:0.11.0'
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:webpsupport:0.11.0'
+
+    // To get the core Fresco library with animated gif support
+    mavenWithAnimatedGifCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAnimatedGifCompile 'com.facebook.fresco:animated-gif:0.11.0'
+
+    // To get the core Fresco library with webp, animated webp and animated gif support
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:animated-gif:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:animated-webp:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:webpsupport:0.11.0'
+}
+```
+
+看了下 internalCompile mavenBasicCompile 都有在 configurations 中定义
+```
+configurations {
+    internalCompile
+    mavenBasicCompile
+    mavenWithWebpCompile
+    mavenWithAnimatedWebpCompile
+    mavenWithAnimatedGifCompile
+    mavenWithAllAnimationsCompile
+}
+```
+然后在productFlavors 中定义了 internal
+```
+productFlavors {
+        // TO TEST THE REMOTE MODULES DURING A RELEASE, COMMENT OUT THE "internal" FLAVOR AND
+        // UNCOMMENT THE REST OTHERWISE A CLASH OCCURS DUE TO THEM TRYING TO CREATE TASKS OF THE
+        // SAME NAME
+
+        internal
+
+//        mavenBasic
+//        mavenWithWebp
+//        mavenWithAnimatedWebp
+//        mavenWithAnimatedGif
+//        mavenWithAllAnimations
+    }
+```
+其他的 Flavors都注释了, 只有一个internal, 然后在打包的时候就是走的  对应的 internalCompile
+这样打不通版本的 包, 选择不通的依赖
+
+相关文档:
+https://docs.gradle.org/current/userguide/dependency_management.html#sub:configurations
