@@ -1,0 +1,16 @@
+## View 不常用方法总结
+###1. isInEditMode() 方法
+isInEditMode() 表示是否处理编辑模式,
+那什么是编辑模式呢?
+就是 我们在查看布局 xml 的时候, 查看布局情况 design 选项那块的面板.
+当处于design 选项下面, 我们可以看到部分的布局预览. 但是有些自定义的 View 不能很好的展现
+这是因为确实有些方法, 在这种状态下是不支持的, 有时候会导致编译不过, 这样我就不能预览整个布局了
+
+所以就提供了 isInEditMode()方法. 如果一些不支持的方法, 如果加上 isInEditMode 方法判断
+如下:
+```
+if (!this.isInEditMode()){
+    this.setTypeface(Typeface.createFromAsset(context.getAssets(),
+            "font/test.ttf"));
+}
+```

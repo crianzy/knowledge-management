@@ -1,0 +1,81 @@
+# gradle 常用知识点总结 (不定时更新)
+
+###1. 如果在 Debug 的时候使用 Release 签名
+```
+debug {
+            signingConfig signingConfigs.release
+            debuggable true
+            versionNameSuffix ".dev"
+        }
+
+```
+重点在:   signingConfig signingConfigs.release
+
+###2. 在多个项目工程中编译指定项目
+```
+./gradlew :MiPushUtil:assembleDebug
+
+:类似于 / 可以理解为表示路径分割符的意思
+```
+上面的代码就是 运行 MiPushUtil项目的下的 assembleDebug 任务
+
+###3. 编译不同的 productFlavors, 是不同的依赖
+默认的情况 我们经常看到三种 依赖方式`debugCompile`, `releaseCompile`, `testCompile`
+这三种是默认,
+但是如果我们需要在编译 productFlavors想使用不同的依赖 就不好弄了
+看如下代码即可明白:
+```
+android {
+  productFlavors {
+         internal
+         mavenBasic
+         mavenWithWebp
+         mavenWithAnimatedWebp
+         mavenWithAnimatedGif
+         mavenWithAllAnimations
+  }
+}
+configurations {
+    internalCompile
+    mavenBasicCompile
+    mavenWithWebpCompile
+    mavenWithAnimatedWebpCompile
+    mavenWithAnimatedGifCompile
+    mavenWithAllAnimationsCompile
+}
+
+dependencies {
+    provided "com.android.support:support-annotations:${SUPPORT_LIB_VERSION}"
+
+    internalCompile project(':drawee-backends:drawee-pipeline')
+    internalCompile project(':static-webp')
+    internalCompile project(':animated-gif')
+    internalCompile project(':animated-webp')
+
+    // To get the core Fresco library only without animations or webp support
+    mavenBasicCompile 'com.facebook.fresco:fresco:0.11.0'
+
+    // To get the core Fresco library with webp support
+    mavenWithWebpCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithWebpCompile 'com.facebook.fresco:webpsupport:0.11.0'
+
+    // To get the core Fresco library with webp support, including animated webp
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:animated-webp:0.11.0'
+    mavenWithAnimatedWebpCompile 'com.facebook.fresco:webpsupport:0.11.0'
+
+    // To get the core Fresco library with animated gif support
+    mavenWithAnimatedGifCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAnimatedGifCompile 'com.facebook.fresco:animated-gif:0.11.0'
+
+    // To get the core Fresco library with webp, animated webp and animated gif support
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:fresco:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:animated-gif:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:animated-webp:0.11.0'
+    mavenWithAllAnimationsCompile 'com.facebook.fresco:webpsupport:0.11.0'
+}
+```
+在上面可以看到, 在productFlavors 定义了不同的Flavors, 然后在 configurations 中做出了相应的配置(注意名称, 是意义对应的)
+然后在 dependencies 就可以使用相应的依赖了
+
+这个知识点是在看 facebook 的 fresco 的源码中学到的
