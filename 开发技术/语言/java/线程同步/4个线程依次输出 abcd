@@ -1,0 +1,120 @@
+
+4个线程, 不管启动顺序, 需要依次输出 ABCD
+这是一个生产者消费者的问题. 需要用 wait 方法 和 notify 方法.
+当我这一步完成了,  我去通知下一步 这样的操作.
+
+下面就是同步的代码, 初步测试看来好像没什么问题,
+
+```
+public class ThreadTest {
+
+    public static void main(String args[]) {
+        new ThreadTest().run();
+    }
+
+    int currentNum = 0;
+
+    Object aOverSyn = new Object();
+    Object bOverSyn = new Object();
+    Object cOverSyn = new Object();
+
+    public void run() {
+        Thread threada = new ThreadA();
+        Thread threadb = new ThreadB();
+        Thread threadc = new ThreadC();
+        Thread threadd = new ThreadD();
+
+        threada.start();
+        threadc.start();
+        threadb.start();
+        threadd.start();
+
+    }
+
+    class ThreadA extends Thread {
+
+        @Override
+        public void run() {
+            System.out.println("ThreadA run ");
+            synchronized (aOverSyn) {
+                System.out.println(" A ");
+                currentNum = 1;
+                aOverSyn.notify();
+            }
+
+        }
+    }
+
+    class ThreadB extends Thread {
+
+        @Override
+        public void run() {
+            System.out.println("ThreadB run ");
+            synchronized (aOverSyn) {
+                if (currentNum == 1) {
+                    System.out.println(" B1 ");
+                } else {
+                    try {
+                        aOverSyn.wait();
+                        System.out.println(" B2 ");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                }
+            }
+            synchronized (bOverSyn) {
+                currentNum = 2;
+                bOverSyn.notify();
+            }
+        }
+    }
+
+    class ThreadC extends Thread {
+
+        @Override
+        public void run() {
+            System.out.println("ThreadC run ");
+            synchronized (bOverSyn) {
+                if (currentNum == 2) {
+                    System.out.println(" C1 ");
+                } else {
+                    try {
+                        bOverSyn.wait();
+                        System.out.println(" C2 ");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+
+            synchronized (cOverSyn) {
+                currentNum = 3;
+                cOverSyn.notify();
+            }
+        }
+    }
+
+    class ThreadD extends Thread {
+
+        @Override
+        public void run() {
+            System.out.println("ThreadD run ");
+            synchronized (cOverSyn) {
+                if (currentNum == 3) {
+                    System.out.println(" D1 ");
+                } else {
+                    try {
+                        cOverSyn.wait();
+                        System.out.println(" D2 ");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+            currentNum = 4;
+        }
+    }
+}
+
+```
