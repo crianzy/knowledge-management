@@ -89,5 +89,151 @@ public PipelineDraweeController(
     init(dataSourceSupplier);
   }
 ```
+这里关于构造参数中的一些对象可能不太了解具体是干嘛的, 但是这不妨碍我们分享的主线. 上面我对一些参数都做了一些基本的注释.
+暂时先道个大概是这个对象是干嘛的就好
 
-回到我们之前关于 DraweeHolder 的分析, 发现 onAttach 和 onDetach 的时候都分别调用了 对应的方法
+回到我们之前关于 DraweeHolder 的分析, 发现 onAttach 和 onDetach 的时候都分别调用了对应的方法
+我们先去 onAttach 方法看看, 发现该方法的实现在 AbstractDraweeController 类中:
+```
+@Override
+  public void onAttach() {
+    mEventTracker.recordEvent(Event.ON_ATTACH_CONTROLLER);
+    Preconditions.checkNotNull(mSettableDraweeHierarchy);
+    mDeferredReleaser.cancelDeferredRelease(this);
+    mIsAttached = true;
+    if (!mIsRequestSubmitted) {
+      // 没有提交请求的话, 则去提交请求
+      submitRequest();
+    }
+  }
+
+  // 提交请求  T 是 CloseableReference<CloseableImage>
+  protected void submitRequest() {
+    final T closeableImage = getCachedImage();
+    if (closeableImage != null) {
+      mDataSource = null;
+      mIsRequestSubmitted = true;
+      mHasFetchFailed = false;
+      // 命中缓存
+      mEventTracker.recordEvent(Event.ON_SUBMIT_CACHE_HIT);
+      getControllerListener().onSubmit(mId, mCallerContext);
+      // 去显示图片
+      onNewResultInternal(mId, mDataSource, closeableImage, 1.0f, true, true);
+      return;
+    }
+    mEventTracker.recordEvent(Event.ON_DATASOURCE_SUBMIT);
+    // 回调开始提交
+    getControllerListener().onSubmit(mId, mCallerContext);
+    // 设置当前进度为0
+    mSettableDraweeHierarchy.setProgress(0, true);
+    mIsRequestSubmitted = true;
+    mHasFetchFailed = false;
+
+    // 这里获取请求数据
+    mDataSource = getDataSource();
+
+    final String id = mId;
+    final boolean wasImmediate = mDataSource.hasResult();
+
+    // 构建结果回调 对象
+    final DataSubscriber<T> dataSubscriber =
+        new BaseDataSubscriber<T>() {
+          @Override
+          public void onNewResultImpl(DataSource<T> dataSource) {
+            // 成功返回图片数据
+            // isFinished must be obtained before image, otherwise we might set intermediate result
+            // as final image.
+            boolean isFinished = dataSource.isFinished();
+            float progress = dataSource.getProgress();
+            T image = dataSource.getResult();
+            if (image != null) {
+              onNewResultInternal(id, dataSource, image, progress, isFinished, wasImmediate);
+            } else if (isFinished) {
+              onFailureInternal(id, dataSource, new NullPointerException(), /* isFinished */ true);
+            }
+          }
+          @Override
+          public void onFailureImpl(DataSource<T> dataSource) {
+            onFailureInternal(id, dataSource, dataSource.getFailureCause(), /* isFinished */ true);
+          }
+          @Override
+          public void onProgressUpdate(DataSource<T> dataSource) {
+            boolean isFinished = dataSource.isFinished();
+            float progress = dataSource.getProgress();
+            onProgressUpdateInternal(id, dataSource, progress, isFinished);
+          }
+        };
+    // 订阅结果  是一个结果链条, 最后会吧结果传递到 dataSubscriber
+    mDataSource.subscribe(dataSubscriber, mUiThreadImmediateExecutor);
+  }
+```
+ok 通过上面两个方法, 可以知道 在 onAttach 方法的时候会去提交显示图片请求, 会首先去缓存中判断是否有图片, 有的话调用 onNewResultInternal 去显示图片,
+没有的话, 需要去查看本地缓存, 或者请求网络. 这两步封装在一起.
+
+但是看上面的方法, 会非常的迷惑,mDataSource.subscribe 一下就能获取到对应的记过, 这里到底是怎么处理的呢?
+这个我们这一届暂时不予讨论.
+然后就是关于内存缓存那块的处理, 这里没有详细的描述, 这个也放到后面,今天这里主要大致的描述 controller
+
+上面我们看到说, 当获取图片成功时会调用onNewResultInternal 方法, ok 我接着去看这个方法
+```
+// 获取到了图片 数据
+private void onNewResultInternal(
+    String id,
+    DataSource<T> dataSource,
+    @Nullable T image,
+    float progress,
+    boolean isFinished,
+    boolean wasImmediate) {
+  // ignore late callbacks (data source that returned the new result is not the one we expected)
+  if (!isExpectedDataSource(id, dataSource)) {
+    // 忽略过期了的回调
+    logMessageAndImage("ignore_old_datasource @ onNewResult", image);
+    releaseImage(image);
+    dataSource.close();
+    return;
+  }
+  mEventTracker.recordEvent(isFinished ? Event.ON_DATASOURCE_RESULT : Event.ON_DATASOURCE_RESULT_INT);
+  // create drawable
+  Drawable drawable;
+  try {
+    // 更具 image 对象创建 drawable
+    drawable = createDrawable(image);
+  } catch (Exception exception) {
+    logMessageAndImage("drawable_failed @ onNewResult", image);
+    releaseImage(image);
+    onFailureInternal(id, dataSource, exception, isFinished);
+    return;
+  }
+  T previousImage = mFetchedImage;
+  Drawable previousDrawable = mDrawable;
+  mFetchedImage = image;
+  mDrawable = drawable;
+  try {
+    // set the new image
+    if (isFinished) {
+      logMessageAndImage("set_final_result @ onNewResult", image);
+      mDataSource = null;
+      // 调用 Hierarchy setImage 方法 显示图片
+      mSettableDraweeHierarchy.setImage(drawable, 1f, wasImmediate);
+      // 回调显示最终的图片
+      getControllerListener().onFinalImageSet(id, getImageInfo(image), getAnimatable());
+      // IMPORTANT: do not execute any instance-specific code after this point
+    } else {
+      logMessageAndImage("set_intermediate_result @ onNewResult", image);
+      mSettableDraweeHierarchy.setImage(drawable, progress, wasImmediate);
+      // 回调 显示渐进图片
+      getControllerListener().onIntermediateImageSet(id, getImageInfo(image));
+      // IMPORTANT: do not execute any instance-specific code after this point
+    }
+  } finally {
+    if (previousDrawable != null && previousDrawable != drawable) {
+      // 释放之前的图片
+      releaseDrawable(previousDrawable);
+    }
+    if (previousImage != null && previousImage != image) {
+      logMessageAndImage("release_previous_result @ onNewResult", previousImage);
+      releaseImage(previousImage);
+    }
+  }
+}
+```
