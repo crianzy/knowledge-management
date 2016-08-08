@@ -237,3 +237,22 @@ private void onNewResultInternal(
   }
 }
 ```
+从上面的方法可以看到, 通过请求或者缓存获取到 imgae数据, 然后经过一系列的处理,
+最后调用了Hierarchy的setImage 方法, 将图片显示在View 上,
+
+
+看到现在这里在结合我之前给的一个UML 图,是否会有一个相对清晰的印象.
+更加的了解了 SimpleDraweeView 与 controller 与 holder 与 Hierarchy 之间的关系.
+draweeView 持有holder 对象
+然后 holder 对象持有 controller 与 Hierarchy 对象
+controller 持有 Hierarchy 对象
+
+draweeView 控制 holder
+holder 控制 controller
+controller 控制 Hierarchy
+
+
+
+现在fresco的整体架构 基本搞清楚了 , 那么接下来就可以去探究一些内部实现的细节.
+
+![](image/fresco_02_01.jpg)
