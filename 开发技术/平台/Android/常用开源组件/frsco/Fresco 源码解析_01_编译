@@ -1,5 +1,16 @@
+# Fresco 源码解析 01 编译
 
-# 编译问题
+## 1.1 下载源码
+建议 fork 一份源码到自己的仓库中, 这样在源码中做一些修改注释什么的都可以很好的提交到 github
+使用如下 github 命令 可以有效的减少克隆时间
+```
+git clone git@github.com:crianzy/fresco.git --depth 1
+```
+这样只会 clone 最近一层的提交哦.
+
+## 1.2 gradle build
+在编译源码的是遇到的一些坑在这里说明一下.
+
 编译这个项目还是比较费时的, 需要下载很多依赖包
 本来想使用 GAE 的代理, 但是发现证书不被信任导致下载失败.
 
@@ -18,16 +29,15 @@ task downloadLibwebp(dependsOn: createNativeDepsDirectories, type: Download) {
 ```
 然后发现那是一个下载任务, 怀疑是因为之前用的是 GAE 代理,导致下载的文件不被信任?
 之后把 onlyIfNewer 改为 false, 和 overwrite 改为 true 之后 重新编译之后通过了
+编译完成后需要记得改回来, 不然每次都需要重新下载该文件
 
-还遇到一个问题就是 NDK 路径没有设置,  设置好 NDK 的路径就好了
+## 1.3 运行 demo
+在 fresco 项目目录的 samples 目录下有多个项目可以运行.
+这里我们先运行
+如果上面 build 通过的话, 那么这里运行就没什么大问题.
+这里主要要看一下 gradle 文件.
 
-
-
-# 第一个项目 demo
-第一个项目只有一个 MainActivty, 里面就是一些 SimpleDraweeView 的一些常规用法
-到时依赖不少东西,
-
-还看到 使用 internalCompile mavenBasicCompile  这样子的依赖东西如下:
+发现在 demo 项目的 gradle 文件中依然了很多东西
 ```
 dependencies {
     provided "com.android.support:support-annotations:${SUPPORT_LIB_VERSION}"
@@ -60,8 +70,7 @@ dependencies {
     mavenWithAllAnimationsCompile 'com.facebook.fresco:webpsupport:0.11.0'
 }
 ```
-
-看了下 internalCompile mavenBasicCompile 都有在 configurations 中定义
+然后看了下载 configurations 也配置了这些对应配置:
 ```
 configurations {
     internalCompile
@@ -72,13 +81,12 @@ configurations {
     mavenWithAllAnimationsCompile
 }
 ```
-然后在productFlavors 中定义了 internal
+然后看到 productFlavors 也定义了相关的配置
 ```
 productFlavors {
         // TO TEST THE REMOTE MODULES DURING A RELEASE, COMMENT OUT THE "internal" FLAVOR AND
         // UNCOMMENT THE REST OTHERWISE A CLASH OCCURS DUE TO THEM TRYING TO CREATE TASKS OF THE
         // SAME NAME
-
         internal
 
 //        mavenBasic
@@ -88,24 +96,15 @@ productFlavors {
 //        mavenWithAllAnimations
     }
 ```
-其他的 Flavors都注释了, 只有一个internal, 然后在打包的时候就是走的  对应的 internalCompile
-这样打不通版本的 包, 选择不通的依赖
+但是只有 internal 一个, 其他都被注释了
+看到这里大家应该明白了,
+找productFlavors 定义了相关的 Flavors , 那么在移动中可以针对该 Flavors 选择单独的依赖包
+这样就可以做到的不同的Flavors 选用不同的依赖, 不用渠道选择不同的依赖.
 
+这是鄙人第一次看到这样子的, 才疏学浅,才在这里说一下
 相关文档:
 https://docs.gradle.org/current/userguide/dependency_management.html#sub:configurations
 
-
-
-
-## 链式处理 图片
-getCommonNetworkFetchToEncodedMemorySequence
--> newEncodedCacheMultiplexToTranscodeSequence
--> newAddImageTransformMetaDataProducer
--> newBitmapCacheGetToDecodeSequence
-    -> newDecodeProducer
-        -> newBitmapCacheGetToBitmapCacheSequence
-          -> newBitmapMemoryCacheProducer
-            -> newBitmapMemoryCacheKeyMultiplexProducer
-              -> threadHandoffProducer
-                -> newBitmapMemoryCacheGetProducer
-                 -> BitmapMemoryCacheGetProducer
+# 1.4 demo 源码
+demo 中源码很简单, 只有一个MainActivty
+就是不同情况的使用 Fresco, 使用 fresco基本都能看懂, 这里不多做介绍

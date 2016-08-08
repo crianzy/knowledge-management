@@ -1,0 +1,242 @@
+# 初始 SimpleDraweeView
+老实说, frsco 的源码还是有点点复杂的. 如果一下子扎进一些方法的细节的话会导致说越来越乱
+所以这里我们先从宏观层面来看看 Fresco
+
+
+## 1. 认识 SimpleDraweeView
+我们看 SimpleDraweeView 其实很简单,
+
+SimpleDraweeView继承 GenericDraweeView
+
+然后 GenericDraweeView 继承自 DraweeView
+
+然后 DraweeView 继承自 ImageView
+
+所以说我们常使用的 SimpleDraweeView 到底还是一个 ImageView
+只是 ImageView 的那些方法,已经不再适用了,如果硬要调用也行,不过那就没 fresco 什么事了
+
+我们继续看 SimpleDraweeView 源码
+
+有个静态变量 和一个静态方法
+```
+private static Supplier<? extends SimpleDraweeControllerBuilder> sDraweeControllerBuilderSupplier;
+
+/** Initializes {@link SimpleDraweeView} with supplier of Drawee controller builders.
+ *  初始化, 在初始化 Fresco 的时候 就调了这个方法
+ * */
+public static void initialize(
+    Supplier<? extends SimpleDraweeControllerBuilder> draweeControllerBuilderSupplier) {
+  sDraweeControllerBuilderSupplier = draweeControllerBuilderSupplier;
+}
+```
+其中静态方法主要是初始化那个 静态变量, 那个静态变量看名字是 DraweeControllerBuilder 的提供者
+
+然后我们在看 init 方法
+```
+private void init(Context context, @Nullable AttributeSet attrs) {
+    // 如果实在预览模式下 直接返回
+    if (isInEditMode()) {
+      return;
+    }
+    // 校验是否初始化
+    Preconditions.checkNotNull( sDraweeControllerBuilderSupplier, "SimpleDraweeView was not initialized!");
+    mSimpleDraweeControllerBuilder = sDraweeControllerBuilderSupplier.get();
+
+    if (attrs != null) {
+      TypedArray gdhAttrs = context.obtainStyledAttributes(
+          attrs,
+          R.styleable.SimpleDraweeView);
+      try {
+        // 判断在 xml 中是否已经定义了 imageUri
+        if (gdhAttrs.hasValue(R.styleable.SimpleDraweeView_actualImageUri)) {
+          setImageURI(Uri.parse(gdhAttrs.getString(R.styleable.SimpleDraweeView_actualImageUri)), null);
+        }
+      } finally {
+        gdhAttrs.recycle();
+      }
+    }
+  }
+```
+在 init 方法其实也没做多少事情, 只是从那个 DraweeControllerBuilder 的提供者 get 了一个 DraweeControllerBuilder 对象.
+这里细节这节暂不考虑
+
+然后就是判断是否在 xml 中是否就已经设置 uri 了, 如果设置了直接调用setImageURI 方法.
+
+还有一点就是isInEditMode()方法, 这个是 View 的方法, 该方法的作用是判断当前状态是否是我们的布局预览界面中,
+如果正常的在手机里面运行的话, isInEditMode() 返回的是 false
+
+在看setImageURI 方法:
+```
+// callerContext 一般都是 null
+public void setImageURI(Uri uri, @Nullable Object callerContext) {
+  DraweeController controller = mSimpleDraweeControllerBuilder
+      .setCallerContext(callerContext)
+      .setUri(uri)
+      .setOldController(getController())
+      .build();
+  // 设置控制器,  在设置 uri 的时候才设置控制器
+  // 到最后 都是设置一个 控制器
+  setController(controller);
+}
+```
+这个方法 通过在 init 方法中获取的 SimpleDraweeControllerBuilder对象 build 了一个 controller,
+然后调用父类的setController 方法.
+关于 controller 的细节本节暂时不考虑
+
+在 fresco 中使用大量的 builder 设计模式, 这里我假设各位看官都明白这个设计模式哈....
+所以对这个碰到这个设计模式的时候可能会直接跳过 Builder类的内容而是直接去看 build方法构建出来的对象的内容
+
+这里可以看到 其实 SimpleDraweeView 没干什么事情, 主要是向外界提供了一个 setImageURI, 同时在该方法中 构建了一个DraweeController 对象
+
+
+## 2 再来看看 GenericDraweeView
+GenericDraweeView 这个类更加的简单
+只有一个 inflateHierarchy 方法:
+```
+protected void inflateHierarchy(Context context, @Nullable AttributeSet attrs) {
+  // 初始化 Drawee Hierarchy builder 设置, 即读取 xml 选项
+  GenericDraweeHierarchyBuilder builder =
+      GenericDraweeHierarchyInflater.inflateBuilder(context, attrs);
+  // 设置比例
+  setAspectRatio(builder.getDesiredAspectRatio());
+  // 设置 层级
+  setHierarchy(builder.build());
+}
+```
+这个方法主要是解析 xml 属性, 更具属性构建对应 GenericDraweeHierarchy 对象.
+>Hierarchy 的意思层级 层次的意思, 所以更具名字判断这个对象 和我们要显示的图片 drawable 有关了
+
+builder.getDesiredAspectRatio() 是获取宽高比例对象.
+然后把 GenericDraweeHierarchy 对象和获取到的宽高比例对象交给父类处理了.
+
+这一个类目的中主要是把 xml 属性解析和 设置 uri 两个功能给分开了
+
+## 3. 且看 DraweeView
+
+上面两个类都相对简单. 因为把主要的问题都交给父类来处理了.
+所以重点都在父类中,先别急着看 DraweeView 的源码.
+
+看看上面调用了父类方法的地方有
+```
+setController(controller) // 设置 Controller
+setAspectRatio(builder.getDesiredAspectRatio()) // 设置宽高比
+setHierarchy(builder.build()) // 设置 显示图片层次
+```
+
+再来看 DraweeView
+先看类名 和 成员变量
+```
+public class DraweeView<DH extends DraweeHierarchy> extends ImageView {
+  // 比例测量
+  private final AspectRatioMeasure.Spec mMeasureSpec = new AspectRatioMeasure.Spec();
+  // 比例
+  private float mAspectRatio = 0; 宽高比
+
+  // holder 基本上 Fresco 的核心过程都在 这个 holder 中
+  private DraweeHolder<DH> mDraweeHolder;
+  private boolean mInitialised = false;
+}
+```
+发现类中包含有泛型且需要继承自 DraweeHierarchy, 然后我们回去看上面的GenericDraweeView 发现吧泛型给确定了,
+使用的是 GenericDraweeHierarchy 类型.
+这里使用泛型也体现了 DraweeView的可扩展性
+
+反现了一个新的类型 DraweeHolder  holder
+而且我们上面有两个 set 方法都没有对应的 成员变量
+
+接着看 init 方法
+```
+private void init(Context context) {
+  // 只初始化一次
+  if (mInitialised) {
+    return;
+  }
+  mInitialised = true;
+  // 创建 Holder
+  mDraweeHolder = DraweeHolder.create(null, context);
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+    // 设置 着色器
+    ColorStateList imageTintList = getImageTintList();
+    if (imageTintList == null) {
+      return;
+    }
+    setColorFilter(imageTintList.getDefaultColor());
+  }
+}
+```
+在这里创建了 mDraweeHolder对象 和做了5.0 以上 着色器处理
+
+在看上面的几个 set方法
+```
+/** Sets the hierarchy. */
+public void setHierarchy(DH hierarchy) {
+  mDraweeHolder.setHierarchy(hierarchy);
+  // 吧最顶层的 视图 设置给 ImageView
+  super.setImageDrawable(mDraweeHolder.getTopLevelDrawable());
+}
+
+/** Sets the controller. */
+public void setController(@Nullable DraweeController draweeController) {
+  // 控制器 最终是 设置给 holder 的, 这里是为了降低 View 与 Fresco 的 耦合, 具体的实现逻辑 与该 View 无关
+  mDraweeHolder.setController(draweeController);
+  super.setImageDrawable(mDraweeHolder.getTopLevelDrawable());
+}
+
+// 设置宽高比
+public void setAspectRatio(float aspectRatio) {
+  if (aspectRatio == mAspectRatio) {
+    return;
+  }
+  mAspectRatio = aspectRatio;
+  requestLayout();
+}
+```
+setHierarchy 和 setController 都是设置给了 mDraweeHolder.
+然后通过 mDraweeHolder.getTopLevelDrawable() 获取我们要现实的 drawable
+
+再来看看 更具宽高比例测量 View
+```
+@Override
+protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+  mMeasureSpec.width = widthMeasureSpec;
+  mMeasureSpec.height = heightMeasureSpec;
+  // 根据宽高比 重新测量
+  AspectRatioMeasure.updateMeasureSpec(
+      mMeasureSpec,
+      mAspectRatio,
+      getLayoutParams(),
+      getPaddingLeft() + getPaddingRight(),
+      getPaddingTop() + getPaddingBottom());
+  super.onMeasure(mMeasureSpec.width, mMeasureSpec.height);
+}
+```
+这部分相对简单, 不再多废话了
+
+除了这下还发现
+重写onAttachedToWindow onDetachedFromWindow onStartTemporaryDetach onFinishTemporaryDetach
+且这些方法最后都调用了 mDraweeHolder 对应的 onAttach 和 onDetach 方法
+
+看到这里, 再来看看 上面提到的几个类的 关系
+
+1.SimpleDraweeView 继承自 GenericDraweeView
+
+2.GenericDraweeView 继承自 DraweeVie
+
+3.更具图片 uri 创建的 Controller 对象 设置给了DraweeView 的 mDraweeHolder对象
+
+4.更具 xml 创建的 GenericDraweeHierarchy 对象 设置给了DraweeView 的 mDraweeHolder对象
+
+5.DraweeView 最终要显示的图像 取自 mDraweeHolder对象
+
+6.View onAttached 和 onDetached 的时候都会调用 mDraweeHolder 对应的方法
+
+最后在上一张 这几个类的 UML 图
+![](image/fresco_02_01.jpg)
+
+ok 看到这里,我想大家都明白了 最重要的是 mDraweeHolder对象了
+
+这样子的设计 很好的结偶尔 View 与图片处理逻辑之间的关系
+
+简单的组合模式, 用的却不简单
+
+ok 这一节 先讲到这里, 下一节 再详细讲讲  holder 和 DraweeHierarchy

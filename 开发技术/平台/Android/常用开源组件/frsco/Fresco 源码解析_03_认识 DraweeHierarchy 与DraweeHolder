@@ -1,0 +1,360 @@
+## Fresco 源码解析认识 DraweeHolder 与 DraweeHierarchy
+在上一节 大致的搞清楚了  DraweeHolder DraweeHierarchy DraweeController  与 DraweeView 之间的关系
+发现重点最后都指向 DraweeHolder
+
+在这之前先抛出几个问题:
+### 1. DraweeView 作为一个 ImageView ,那他显示的 Drawable 是由谁来提供,怎么提供的?
+在上一篇文章我们其实又看到 如下代码:
+```
+super.setImageDrawable(mDraweeHolder.getTopLevelDrawable());
+```
+说明我们现实的 drawable 是通过 getTopLevelDrawable 方法获取的. ok 好接下来我们重点要看这个方法.
+
+### 2. DraweeView 是怎样通过网络请求数据, 然后在现实图片的呢?
+这个问题, 我想大家在看 fresco 源码的时候都非常迫切的想知道.
+别急这个问题 慢慢一步步俩, 这个问题先留着.
+
+ok 下面正式看  DraweeHolder 的源码
+```
+public class DraweeHolder<DH extends DraweeHierarchy> implements VisibilityCallback, MemoryUiTrimmable {
+
+  private boolean mIsControllerAttached = false;
+  private boolean mIsHolderAttached = false;
+  private boolean mIsVisible = true;
+  private boolean mTrimmed = false;
+  private DH mHierarchy;
+
+  private DraweeController mController = null;
+
+  private final DraweeEventTracker mEventTracker = new DraweeEventTracker();
+  ....
+}
+```
+我上面只列出了一些成员变量, 其他的一些方法后面再看.
+首先我们可以看到 泛型 和 DraweeView 一样的泛型, 和 DraweeHierarch有关
+然后还有一个成员变量 mController 就是我们外面在 setImageUri 中生成的 Controller
+
+mEventTracker 是一个事件记录器, 和我们探求的核心目的关系不大, 不多做描述.
+
+然后 DraweeHolder 还继承了 VisibilityCallback, MemoryUiTrimmable 两个接口
+一个 可见性的回调, 一个和内存有关, 这里不多做详解
+
+在来看看其他方法
+```
+public static <DH extends DraweeHierarchy> DraweeHolder<DH> create(
+    @Nullable DH hierarchy,
+    Context context) {
+  // 构造 DraweeHolder
+  DraweeHolder<DH> holder = new DraweeHolder<DH>(hierarchy);
+  holder.registerWithContext(context);// 这个方法啥也没做  ,未来可能会用到
+
+  MemoryUiTrimmableRegistry.registerUiTrimmable(holder);
+  // 这个方法其实也没做啥, 就是把holder 保存到一个集合里面了
+  return holder;
+}
+
+// 构造方法 hierarchy 作为参数
+public DraweeHolder(@Nullable DH hierarchy) {
+  if (hierarchy != null) {
+    setHierarchy(hierarchy);
+  }
+}
+
+// 设置控制器
+public void setController(@Nullable DraweeController draweeController) {
+  boolean wasAttached = mIsControllerAttached;
+  if (wasAttached) {
+    // detach 原来的
+    detachController();
+  }
+
+  // Clear the old controller
+  if (mController != null) {
+    mEventTracker.recordEvent(Event.ON_CLEAR_OLD_CONTROLLER);
+    mController.setHierarchy(null);
+  }
+  mController = draweeController;
+  if (mController != null) {
+    mEventTracker.recordEvent(Event.ON_SET_CONTROLLER);
+    // 设置 Hierarchy
+    mController.setHierarchy(mHierarchy);
+  } else {
+    mEventTracker.recordEvent(Event.ON_CLEAR_CONTROLLER);
+  }
+
+  if (wasAttached) {
+    // 如果之前是 attached 的状态, 那么设置新的之后也需要 attach
+    attachController();
+  }
+}
+
+// 设置Hierarchy
+public void setHierarchy(DH hierarchy) {
+  mEventTracker.recordEvent(Event.ON_SET_HIERARCHY);
+  setVisibilityCallback(null);
+  mHierarchy = Preconditions.checkNotNull(hierarchy);
+  Drawable drawable = mHierarchy.getTopLevelDrawable();
+  onVisibilityChange(drawable == null || drawable.isVisible());
+  setVisibilityCallback(this);
+  if (mController != null) {
+    // 把 视图层次 给 控制器
+    mController.setHierarchy(hierarchy);
+  }
+}
+
+// 添加控制器
+private void attachController() {
+  if (mIsControllerAttached) {
+    return;
+  }
+  mEventTracker.recordEvent(Event.ON_ATTACH_CONTROLLER);
+  mIsControllerAttached = true;
+  if (mController != null &&
+      mController.getHierarchy() != null) {
+    // 回调控制器的 onAttach
+    mController.onAttach();
+  }
+}
+
+private void detachController() {
+  if (!mIsControllerAttached) {
+    return;
+  }
+  mEventTracker.recordEvent(Event.ON_DETACH_CONTROLLER);
+  mIsControllerAttached = false;
+  if (mController != null) {
+    // 回调控制器的 onAttach
+    mController.onDetach();
+  }
+}
+
+private void attachOrDetachController() {
+  if (mIsHolderAttached && mIsVisible && !mTrimmed) {
+    attachController();
+  } else {
+    detachController();
+  }
+}
+
+// 获取要显示的 drawable
+public Drawable getTopLevelDrawable() {
+  return mHierarchy == null ? null : mHierarchy.getTopLevelDrawable();
+}
+
+public void onAttach() {
+//    记录事件
+  mEventTracker.recordEvent(Event.ON_HOLDER_ATTACH);
+  mIsHolderAttached = true;
+  attachOrDetachController();
+}
+
+public void onDetach() {
+  mEventTracker.recordEvent(Event.ON_HOLDER_DETACH);
+  mIsHolderAttached = false;
+  attachOrDetachController();
+}
+```
+这几个方法看来,其实 holder 也没有做多少事情, 更多的是一个中转,view 的 onAttach onDetach 方法最后还是会走到 mController 对应的方法
+
+然后显示的drawable 那块,也是直接通过 mHierarchy 获取的.
+但是有一点需要注意, mHierarch 也传递给了 mController.
+
+mController 作为控制器, 肯定对mHierarch 做了一些处理, 那么我们通过 mHierarchy.getTopLevelDrawable() 取到的drawable 才是正确的.
+
+到头来mController 才是最核心的地方放, 不过我们这节 暂时还不讲 mController, 下面接下来看看 mHierarchy
+
+
+## 2. DraweeHierarchy
+
+先看 DraweeHierarchy 接口:
+```
+public interface DraweeHierarchy {
+  Drawable getTopLevelDrawable();
+}
+```
+DraweeHierarchy 只有一个方法, 而且在DraweeHolder 和 DraweeView 中所持有的对象 也是 DraweeHierarchy 类型.
+
+我们之前在GenericDraweeView 的inflateHierarchy 方法中看到DraweeHierarchy 的对象是由 GenericDraweeHierarchyBuilder 构建出来的
+我们现在去看看他的 build 方法
+```
+public GenericDraweeHierarchy build() {
+  // 校验
+  validate();
+  // 根据 builder 创建 具体的视图层次
+  return new GenericDraweeHierarchy(this);
+}
+```
+发现创建的是一个 GenericDraweeHierarchy 对象
+ok, 接着看 GenericDraweeHierarchy,
+发现他是继承自 SettableDraweeHierarchy,
+SettableDraweeHierarchy 源码如下:
+```
+public interface SettableDraweeHierarchy extends DraweeHierarchy {
+  void reset();
+  void setImage(Drawable drawable, float progress, boolean immediate);
+  void setProgress(float progress, boolean immediate);
+  void setFailure(Throwable throwable);
+  void setRetry(Throwable throwable);
+  void setControllerOverlay(Drawable drawable);
+}
+
+```
+这个 接口也相对简单, 只有一些设置方法, 设置显示的图片, 设置当前加载过程, 设置失败等等.
+
+重点在实现类, 我们在 SimpleDraweeView 上显示 的 drawable 都是来自这个实现类的
+
+首先来看看 GenericDraweeHierarchy的成员变量
+```
+public class GenericDraweeHierarchy implements SettableDraweeHierarchy {
+
+  // drawable[] 每一层的索引
+  private static final int BACKGROUND_IMAGE_INDEX = 0;
+  private static final int PLACEHOLDER_IMAGE_INDEX = 1;
+  private static final int ACTUAL_IMAGE_INDEX = 2;
+  private static final int PROGRESS_BAR_IMAGE_INDEX = 3;
+  private static final int RETRY_IMAGE_INDEX = 4;
+  private static final int FAILURE_IMAGE_INDEX = 5;
+  private static final int OVERLAY_IMAGES_INDEX = 6;
+
+  // 空的 drawable
+  private final Drawable mEmptyActualImageDrawable = new ColorDrawable(Color.TRANSPARENT);
+
+  private final Resources mResources;
+  // 圆角参数
+  private @Nullable RoundingParams mRoundingParams;
+
+  // 最终要显示的 drawable
+  private final RootDrawable mTopLevelDrawable;
+
+  // 里面有一个 Drawable[]数组, 控制多个 drawable 的显示与不显示
+  private final FadeDrawable mFadeDrawable;
+
+  //实际要显示图片的 包装
+  private final ForwardingDrawable mActualImageWrapper;
+
+}
+```
+更具上面代码的注释, 基本能有个大概的了解.
+
+下面来看看构造方法
+```
+// 通过 build 创建
+GenericDraweeHierarchy(GenericDraweeHierarchyBuilder builder) {
+  mResources = builder.getResources();
+  mRoundingParams = builder.getRoundingParams();
+
+  //实际要显示图片的 包装
+  mActualImageWrapper = new ForwardingDrawable(mEmptyActualImageDrawable);
+
+  // 获取 覆盖的视图 数量
+  int numOverlays = (builder.getOverlays() != null) ? builder.getOverlays().size() : 1;
+  numOverlays += (builder.getPressedStateOverlay() != null) ? 1 : 0;
+
+  // layer indices and count
+  int numLayers = OVERLAY_IMAGES_INDEX + numOverlays;
+
+  // array of layers
+  Drawable[] layers = new Drawable[numLayers];
+  // 处理不同层次的图片
+  layers[BACKGROUND_IMAGE_INDEX] = buildBranch(builder.getBackground(), null);
+  layers[PLACEHOLDER_IMAGE_INDEX] = buildBranch(
+      builder.getPlaceholderImage(),
+      builder.getPlaceholderImageScaleType());
+
+  // 处理实际要显示的图片 , 和其他层不一样
+  layers[ACTUAL_IMAGE_INDEX] = buildActualImageBranch(
+      mActualImageWrapper,
+      builder.getActualImageScaleType(),
+      builder.getActualImageFocusPoint(),
+      builder.getActualImageMatrix(),
+      builder.getActualImageColorFilter());
+
+  // 处理 progressBar 的图片
+  layers[PROGRESS_BAR_IMAGE_INDEX] = buildBranch(
+      builder.getProgressBarImage(),
+      builder.getProgressBarImageScaleType());
+
+  // 处理重试图片
+  layers[RETRY_IMAGE_INDEX] = buildBranch(
+      builder.getRetryImage(),
+      builder.getRetryImageScaleType());
+
+  // 处理失败图片
+  layers[FAILURE_IMAGE_INDEX] = buildBranch(
+      builder.getFailureImage(),
+      builder.getFailureImageScaleType());
+
+  // 处理覆盖图片
+  if (numOverlays > 0) {
+    int index = 0;
+    if (builder.getOverlays() != null) {
+      for (Drawable overlay : builder.getOverlays()) {
+        layers[OVERLAY_IMAGES_INDEX + index++] = buildBranch(overlay, null);
+      }
+    } else {
+      index = 1; // reserve space for one overlay
+    }
+    if (builder.getPressedStateOverlay() != null) {
+      layers[OVERLAY_IMAGES_INDEX + index] = buildBranch(builder.getPressedStateOverlay(), null);
+    }
+  }
+
+  // fade drawable composed of layers
+  // 把 drawable 构建成 FadeDrawable对象, 更加方便控制
+  mFadeDrawable = new FadeDrawable(layers);
+  // 设置动画时间
+  mFadeDrawable.setTransitionDuration(builder.getFadeDuration());
+
+  // rounded corners drawable (optional)
+  // fade 和 圆角 组合
+  Drawable maybeRoundedDrawable =
+      WrappingUtils.maybeWrapWithRoundedOverlayColor(mFadeDrawable, mRoundingParams);
+
+  // top-level drawable
+  // 再出包装一些 maybeRoundedDrawable
+  mTopLevelDrawable = new RootDrawable(maybeRoundedDrawable);
+
+  //TODO 编译, 表示自定义的 drawable 一些属性生效了?
+  mTopLevelDrawable.mutate();
+
+  // 重置 fadedrawabke 开始 fade 动画
+  resetFade();
+}
+```
+看了构造方法之后,我想大家对 fresco 显示的图片会有一个大概印象.
+一个 drawable 数组, 每一项都输不同的状态的图片. 通过空着数组的中每一项的显示与否,来呈现不同的状态.
+还有就是看到 有大量的自定义的 Drawable 类型, 其实内部实现的功能都相对简单, 这里也不去细致的研究,
+看名字大概都能知道该对象是干嘛用的.
+
+现在我们还需要去看看 setImage 的具体实现, 这样能对GenericDraweeHierarchy 有个跟进一步的理解
+```
+@Override
+ public void setImage(Drawable drawable, float progress, boolean immediate) {
+  // 包装一下要显示的 drawable
+   drawable = WrappingUtils.maybeApplyLeafRounding(drawable, mRoundingParams, mResources);
+   drawable.mutate();// 标记改了
+   mActualImageWrapper.setDrawable(drawable);
+   // 开始处理 drawable 数组
+   mFadeDrawable.beginBatchMode();
+   fadeOutBranches();
+   fadeInLayer(ACTUAL_IMAGE_INDEX);
+   setProgress(progress);
+   if (immediate) {
+    // 如果是立即就要显示的话, 就需要立马结束 动画
+     mFadeDrawable.finishTransitionImmediately();
+   }
+   mFadeDrawable.endBatchMode();
+ }
+```
+ok 其实这个方法也基本就是包装要显示的 drawable, 然后处理 drawable 数组.
+
+关于一些其他的方法, 限于片防护限制, 这里不多做描述的.
+
+但是有一点我们需要知道的是: GenericDraweeHierarchy 是控制显示那种状态的图片的控制器
+如果我们网络请求失败, 需要调用 对应的 setFailure 方法
+如果显示进度条, 则需要显示调动 对应 setProgress 方法
+如果成功的话, 则需要调用 对应的 setImage 方法
+
+看到这里可以发现 fresco 整个都是在面向接口编程. SimpleDraweeView 面向的是 都是 DraweeHierarchy, 少有直接依赖对象的
+
+ok 这一节就说道这里. 可能讲的不是特别的清晰, 还望各位看官海涵.  然后如果有错误的地方欢迎指出来

@@ -1,0 +1,93 @@
+ok 这一节我们主要来讲一讲 Fresco 最重要的控制器 DraweeController
+
+我们找到 DraweeController, 发现他是一个接口:
+```
+public interface DraweeController {
+  DraweeHierarchy getHierarchy();
+  void setHierarchy(@Nullable DraweeHierarchy hierarchy);
+  void onAttach();
+  void onDetach();
+  boolean onTouchEvent(MotionEvent event);
+  Animatable getAnimatable();
+  void setContentDescription(String contentDescription);
+  String getContentDescription();
+}
+```
+
+然后找他的实现类, 发现有一个 abstract 的实现类  `abstract class AbstractDraweeController`
+
+然后继续去找实现类, 发现有两个:`VolleyDraweeController` , `PipelineDraweeController`
+
+那么我们之前讲到的那个 controller 到底是哪个呢?
+这个对回到最开始看, controller 是怎么构建出来的
+
+我们回到 SimpleDraweeView 类的setImageURI 方法, controller 是从这里构建出来的:
+```
+public void setImageURI(Uri uri, @Nullable Object callerContext) {
+  // 一般情况下 都是 PipelineDraweeControllerBuilderSupplier
+  DraweeController controller = mSimpleDraweeControllerBuilder
+      .setCallerContext(callerContext)
+      .setUri(uri)
+      .setOldController(getController())
+      .build();
+  // 设置控制器,  在设置 uri 的时候才设置控制器
+  // 到最后 都是设置一个 控制器
+  setController(controller);
+}
+```
+是由 mSimpleDraweeControllerBuilder 构建出来的
+
+然后 mSimpleDraweeControllerBuilder 是在 init 方法中完成的
+```
+private void init(Context context, @Nullable AttributeSet attrs) {
+  // 省略代码
+  mSimpleDraweeControllerBuilder = sDraweeControllerBuilderSupplier.get();
+  // 省略代码
+}
+```
+是通过调用 sDraweeControllerBuilderSupplier.get 方法来获取的.
+
+我继续看, sDraweeControllerBuilderSupplier是SimpleDraweeView 的一个静态变量
+然后 mSimpleDraweeControllerBuilder 的初始化是在 SimpleDraweeView.initialize()方法,这是一个静态方法
+然后继续看这个方法的调用者, 发现是 Fresco 类.
+```
+private static void initializeDrawee(Context context) {
+  sDraweeControllerBuilderSupplier = new PipelineDraweeControllerBuilderSupplier(context);
+  // 初始化 SimpleDraweeView
+  SimpleDraweeView.initialize(sDraweeControllerBuilderSupplier);
+}
+```
+
+还有在VolleyDraweeAdapter 类中也有调用 SimpleDraweeView.initialize方法, 但是在我们的正常使用过程中, 基本没有使用到这个类.
+而Fresco类, 在我们初始化 fresco 的时候就用到了
+所以这里我们基本能够确定说是 我们之前分析的 controller 是有PipelineDraweeControllerBuilderSupplier 构建的
+然后 controller 自然就是PipelineDraweeController类型.
+当然这样说有点武断. 有兴趣的课自己跟着一步步看, 这里不做过多的详细描述.
+还有关于具体的构建出 PipelineDraweeController 对象的过程 基本跟着方法走就问题不大了, 这里也不多做描述
+
+现在最好不要太过多的深入某个类或者方法的细节, 不然很难看清全貌.
+
+我们现在确定了说controller 是PipelineDraweeController类型.
+我们开看看他的构造方法, 参数有点多:
+```
+public PipelineDraweeController(
+      Resources resources,
+      DeferredReleaser deferredReleaser,// 释放资源的辅助对象
+      AnimatedDrawableFactory animatedDrawableFactory,// 动画 drawable 工厂
+      Executor uiThreadExecutor,// 线程池
+      MemoryCache<CacheKey, CloseableImage> memoryCache,// 缓存对象
+      Supplier<DataSource<CloseableReference<CloseableImage>>> dataSourceSupplier,// 数据提供者
+      String id,// 对应的 id
+      CacheKey cacheKey,// 对应的缓存 key
+      Object callerContext// 调用者的上下文, 一本为空
+      ) {
+      super(deferredReleaser, uiThreadExecutor, id, callerContext);
+    mResources = resources;
+    mAnimatedDrawableFactory = animatedDrawableFactory;
+    mMemoryCache = memoryCache;
+    mCacheKey = cacheKey;
+    init(dataSourceSupplier);
+  }
+```
+
+回到我们之前关于 DraweeHolder 的分析, 发现 onAttach 和 onDetach 的时候都分别调用了 对应的方法
